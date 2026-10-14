@@ -342,7 +342,7 @@ testing {
     subproject("smoke-test")
 }
 
-rootProject.name = "gradle"
+rootProject.name = "gradium"
 
 FeaturePreviews.Feature.entries.forEach { feature ->
     if (feature.isActive) {
