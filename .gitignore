@@ -127,3 +127,7 @@ atlassian-ide-plugin.xml
 .claude/worktrees
 .harness.json
 
+
+# Gradium
+.gradium/
+*.gradium
