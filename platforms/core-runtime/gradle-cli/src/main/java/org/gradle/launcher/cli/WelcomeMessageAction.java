@@ -74,7 +74,7 @@ public class WelcomeMessageAction implements Action<ExecutionListener> {
 
             if (!markerFile.exists() && logger.isLifecycleEnabled()) {
                 logger.lifecycle("");
-                logger.lifecycle("Welcome to Gradle " + gradleVersion.getVersion() + "!");
+                logger.lifecycle("Welcome to Gradium " + gradleVersion.getVersion() + "!");
 
                 String featureList = readReleaseFeatures();
 
