@@ -1,0 +1,58 @@
+/*
+ * Copyright 2017 the original author or authors.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *      http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+package org.gradle.api;
+
+import org.gradle.internal.exceptions.Contextual;
+
+/**
+ * A <code>InvalidUserCodeException</code> is thrown when user-provided code cannot be executed.
+ * @since 1.4
+ */
+@Contextual
+public class InvalidUserCodeException extends GradleException {
+    /**
+     * Creates a new {@code InvalidUserCodeException}.
+     *
+     * @since 1.4
+     */
+    public InvalidUserCodeException() {
+    }
+
+    /**
+     * Creates a new {@code InvalidUserCodeException}.
+     *
+     * @since 1.4
+     */
+    public InvalidUserCodeException(String message) {
+        super(message);
+    }
+
+    /**
+     * Creates a new {@code InvalidUserCodeException}.
+     * <p>
+     * There is deliberately no {@code (String, Iterable)} overload carrying resolution suggestions. It would make
+     * {@code new InvalidUserCodeException(message, null)} ambiguous with this constructor: Java and Kotlin would
+     * reject such a call at compile time, and Groovy, which resolves overloads from the runtime types, would select
+     * the resolutions constructor and fail on the null. To attach resolutions, use
+     * {@link #InvalidUserCodeException(String)} followed by {@link #addResolution(String)}.
+     *
+     * @since 1.4
+     */
+    public InvalidUserCodeException(String message, Throwable cause) {
+        super(message, cause);
+    }
+}

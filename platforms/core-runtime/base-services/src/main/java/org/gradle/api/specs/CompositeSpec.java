@@ -1,0 +1,135 @@
+/*
+ * Copyright 2010 the original author or authors.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *      http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+package org.gradle.api.specs;
+
+import com.google.common.collect.Iterators;
+
+import java.util.Arrays;
+import java.util.Collection;
+import java.util.Collections;
+import java.util.Iterator;
+import java.util.List;
+
+/**
+ * A {@link org.gradle.api.specs.Spec} which aggregates a sequence of other {@code Spec} instances.
+ *
+ * @param <T> The target type for this Spec
+ * @since 0.7
+ */
+public abstract class CompositeSpec<T> implements Spec<T> {
+    private static final Spec<?>[] EMPTY = new Spec<?>[0];
+
+    private final Spec<? super T>[] specs;
+
+    /**
+     * Creates a spec with no member specs.
+     *
+     * @since 3.0
+     */
+    protected CompositeSpec() {
+        this.specs = uncheckedCast(EMPTY);
+    }
+
+    /**
+     * Creates a spec with the given member specs, in order.
+     *
+     * @since 0.7
+     */
+    @SuppressWarnings("unchecked")
+    protected CompositeSpec(Spec<? super T>... specs) {
+        if (specs.length == 0) {
+            this.specs = uncheckedCast(EMPTY);
+        } else {
+            this.specs = specs.clone();
+        }
+    }
+
+    /**
+     * Creates a spec with the member specs of the given iterable, in iteration order.
+     *
+     * @since 0.9
+     */
+    protected CompositeSpec(Iterable<? extends Spec<? super T>> specs) {
+        if (specs instanceof Collection) {
+            Collection<Spec<? super T>> specCollection = uncheckedCast(specs);
+            if (specCollection.isEmpty()) {
+                this.specs = uncheckedCast(EMPTY);
+            } else {
+                this.specs = uncheckedCast(specCollection.toArray(EMPTY));
+            }
+        } else {
+            Iterator<? extends Spec<? super T>> iterator = specs.iterator();
+            if (!iterator.hasNext()) {
+                this.specs = uncheckedCast(EMPTY);
+            } else {
+                this.specs = uncheckedCast(Iterators.toArray(iterator, Spec.class));
+            }
+        }
+    }
+
+    @SuppressWarnings({"unchecked", "TypeParameterUnusedInFormals"})
+    static <T> T uncheckedCast(Object object) {
+        return (T) object;
+    }
+
+    // Not public. Evaluation of these specs is a major hot spot for large builds, so use an array for iteration
+    Spec<? super T>[] getSpecsArray() {
+        return specs;
+    }
+
+    /**
+     * Returns an unmodifiable view of the member specs, in order.
+     *
+     * @since 0.7
+     */
+    public List<Spec<? super T>> getSpecs() {
+        return Collections.unmodifiableList(Arrays.asList(specs));
+    }
+
+    /**
+     * Returns whether this spec has no member specs.
+     *
+     * @since 3.0
+     */
+    public boolean isEmpty() {
+        return specs.length == 0;
+    }
+
+    @Override
+    public final boolean equals(Object o) {
+        if (this == o) {
+            return true;
+        }
+        if (o == null || getClass() != o.getClass()) {
+            return false;
+        }
+
+        CompositeSpec<?> that = (CompositeSpec<?>) o;
+        return Arrays.equals(specs, that.specs);
+    }
+
+    @Override
+    public final int hashCode() {
+        int result = getClass().hashCode();
+        result = 31 * result + Arrays.hashCode(specs);
+        return result;
+    }
+
+    @Override
+    public String toString() {
+        return getClass().getSimpleName() + Arrays.toString(specs);
+    }
+}

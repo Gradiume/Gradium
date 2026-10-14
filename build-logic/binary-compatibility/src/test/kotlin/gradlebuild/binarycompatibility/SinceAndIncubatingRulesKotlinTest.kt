@@ -1,0 +1,857 @@
+/*
+ * Copyright 2020 the original author or authors.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *      http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+package gradlebuild.binarycompatibility
+
+import org.intellij.lang.annotations.Language
+import org.junit.jupiter.api.Test
+
+
+class SinceAndIncubatingRulesKotlinTest : AbstractBinaryCompatibilityTest() {
+
+    @Language("kotlin")
+    private
+    val publicKotlinMembers = """
+
+        fun foo() {}
+
+        val bar: String = "bar"
+
+        val bool: Boolean = true
+
+        val isBool: Boolean = true
+
+        var bazar = "bazar"
+
+        var bazool: Boolean = true
+
+        var isFool: Boolean = true
+
+        fun String.fooExt() {}
+
+        fun Int.fooExt() {}
+
+        val String.barExt: String
+            get() = "bar"
+
+        var Int.bazarExt: String
+            get() = "bar"
+            set(value) = Unit
+
+        operator fun String.invoke(p: String, block: String.() -> Unit) = Unit
+
+        ${""/* For Kotlin DSL, we generate sources with collection types mapped to the Kotlin ones. See `org.gradle.kotlin.dsl.internal.sharedruntime.codegen.ApiTypeProviderKt#mappedTypeStrings` */}
+
+        fun wrap(a: kotlin.collections.Iterable<String>, b: kotlin.collections.Iterator<String>, c: kotlin.collections.ListIterator<String>): Unit = Unit
+
+        fun wrap(a: kotlin.collections.Collection<String>): Unit = Unit
+
+        fun wrap(a: kotlin.collections.List<String>, b: kotlin.collections.ArrayList<String>): Unit = Unit
+
+        fun wrap(a: kotlin.collections.Set<String>, b: kotlin.collections.HashSet<String>, c: kotlin.collections.LinkedHashSet<String>): Unit = Unit
+
+        fun wrap(a: kotlin.collections.Map<String, String>, b: kotlin.collections.Map.Entry<String, String>): Unit = Unit
+
+        fun wrap(a: kotlin.collections.HashMap<String, String>, b: kotlin.collections.LinkedHashMap<String, String>): Unit = Unit
+
+    """
+
+    @Language("kotlin")
+    private
+    val annotatedKotlinMembers = """
+
+        /** @since 2.0 */
+        @Incubating
+        fun foo() {}
+
+        /** @since 2.0 */
+        @get:Incubating
+        val bar: String = "bar"
+
+        /** @since 2.0 */
+        @get:Incubating
+        val bool: Boolean = true
+
+        /** @since 2.0 */
+        @get:Incubating
+        val isBool: Boolean = true
+
+        /** @since 2.0 */
+        @get:Incubating
+        @set:Incubating
+        var bazar = "bazar"
+
+        /** @since 2.0 */
+        @get:Incubating
+        @set:Incubating
+        var bazool: Boolean = true
+
+        /** @since 2.0 */
+        @get:Incubating
+        @set:Incubating
+        var isFool: Boolean = true
+
+        /** @since 2.0 */
+        @Incubating
+        fun String.fooExt() {}
+
+        /** @since 2.0 */
+        @Incubating
+        fun Int.fooExt() {}
+
+        /** @since 2.0 */
+        @get:Incubating
+        val String.barExt: String
+            get() = "bar"
+
+        /** @since 2.0 */
+        @get:Incubating
+        @set:Incubating
+        var Int.bazarExt: String
+            get() = "bar"
+            set(value) = Unit
+
+        /** @since 2.0 */
+        @Incubating
+        operator fun String.invoke(p: String, block: String.() -> Unit) = Unit
+
+        /** @since 2.0 */
+        @Incubating
+        fun wrap(a: kotlin.collections.Iterable<String>, b: kotlin.collections.Iterator<String>, c: kotlin.collections.ListIterator<String>): Unit = Unit
+
+        /** @since 2.0 */
+        @Incubating
+        fun wrap(a: kotlin.collections.Collection<String>): Unit = Unit
+
+        /** @since 2.0 */
+        @Incubating
+        fun wrap(a: kotlin.collections.List<String>, b: kotlin.collections.ArrayList<String>): Unit = Unit
+
+        /** @since 2.0 */
+        @Incubating
+        fun wrap(a: kotlin.collections.Set<String>, b: kotlin.collections.HashSet<String>, c: kotlin.collections.LinkedHashSet<String>): Unit = Unit
+
+        /** @since 2.0 */
+        @Incubating
+        fun wrap(a: kotlin.collections.Map<String, String>, b: kotlin.collections.Map.Entry<String, String>): Unit = Unit
+
+        /** @since 2.0 */
+        @Incubating
+        fun wrap(a: kotlin.collections.HashMap<String, String>, b: kotlin.collections.LinkedHashMap<String, String>): Unit = Unit
+
+    """
+
+    @Test
+    fun `new top-level kotlin members`() {
+
+        checkNotBinaryCompatibleKotlin(
+            v2 = """
+
+           $publicKotlinMembers
+
+            const val cathedral = "cathedral"
+
+            """
+        ) {
+
+            assertHasNoInformation()
+            assertHasNoWarning()
+            assertHasErrors(
+
+                // Kotlin file-facade classes are ignored by the @since rule
+                listOf("Class com.example.SourceKt: Is not annotated with @Incubating."),
+
+                added("Field", "cathedral"),
+                added("Method", "SourceKt.foo()"),
+                added("Method", "SourceKt.fooExt(int)"),
+                added("Method", "SourceKt.fooExt(java.lang.String)"),
+                added("Method", "SourceKt.getBar()"),
+                added("Method", "SourceKt.getBarExt(java.lang.String)"),
+                added("Method", "SourceKt.getBazar()"),
+                added("Method", "SourceKt.getBazarExt(int)"),
+                added("Method", "SourceKt.getBazool()"),
+                added("Method", "SourceKt.getBool()"),
+                added("Method", "SourceKt.invoke(java.lang.String,java.lang.String,kotlin.jvm.functions.Function1)"),
+                added("Method", "SourceKt.isBool()"),
+                added("Method", "SourceKt.isFool()"),
+                added("Method", "SourceKt.setBazar(java.lang.String)"),
+                added("Method", "SourceKt.setBazarExt(int,java.lang.String)"),
+                added("Method", "SourceKt.setBazool(boolean)"),
+                added("Method", "SourceKt.setFool(boolean)"),
+                added("Method", "SourceKt.wrap(java.lang.Iterable,java.util.Iterator,java.util.ListIterator)"),
+                added("Method", "SourceKt.wrap(java.util.Collection)"),
+                added("Method", "SourceKt.wrap(java.util.HashMap,java.util.LinkedHashMap)"),
+                added("Method", "SourceKt.wrap(java.util.List,java.util.ArrayList)"),
+                added("Method", "SourceKt.wrap(java.util.Map,java.util.Map\$Entry)"),
+                added("Method", "SourceKt.wrap(java.util.Set,java.util.HashSet,java.util.LinkedHashSet)"),
+            )
+        }
+
+        // with existing non-incubating file-facade class, new members must be annotated with @Incubating and @since
+        checkBinaryCompatibleKotlin(
+            v1 = """
+                val existing = "file-facade-class"
+            """,
+            v2 = """
+                val existing = "file-facade-class"
+
+                $annotatedKotlinMembers
+
+                /** @since 2.0 */
+                @field:Incubating
+                const val cathedral = "cathedral"
+            """
+        ) {
+
+            assertHasNoWarning()
+            assertHasInformation(
+                newApi("Field", "cathedral"),
+                newApi("Method", "SourceKt.foo()"),
+                newApi("Method", "SourceKt.fooExt(int)"),
+                newApi("Method", "SourceKt.fooExt(java.lang.String)"),
+                newApi("Method", "SourceKt.getBar()"),
+                newApi("Method", "SourceKt.getBarExt(java.lang.String)"),
+                newApi("Method", "SourceKt.getBazar()"),
+                newApi("Method", "SourceKt.getBazarExt(int)"),
+                newApi("Method", "SourceKt.getBazool()"),
+                newApi("Method", "SourceKt.getBool()"),
+                newApi("Method", "SourceKt.invoke(java.lang.String,java.lang.String,kotlin.jvm.functions.Function1)"),
+                newApi("Method", "SourceKt.isBool()"),
+                newApi("Method", "SourceKt.isFool()"),
+                newApi("Method", "SourceKt.setBazar(java.lang.String)"),
+                newApi("Method", "SourceKt.setBazarExt(int,java.lang.String)"),
+                newApi("Method", "SourceKt.setBazool(boolean)"),
+                newApi("Method", "SourceKt.setFool(boolean)"),
+                newApi("Method", "SourceKt.wrap(java.lang.Iterable,java.util.Iterator,java.util.ListIterator)"),
+                newApi("Method", "SourceKt.wrap(java.util.Collection)"),
+                newApi("Method", "SourceKt.wrap(java.util.HashMap,java.util.LinkedHashMap)"),
+                newApi("Method", "SourceKt.wrap(java.util.List,java.util.ArrayList)"),
+                newApi("Method", "SourceKt.wrap(java.util.Map,java.util.Map\$Entry)"),
+                newApi("Method", "SourceKt.wrap(java.util.Set,java.util.HashSet,java.util.LinkedHashSet)"),
+            )
+        }
+
+        // new file-facade class can be annotated with @Incubating, members must be annotated with @since
+        checkBinaryCompatible(
+            v2 = {
+                withFile(
+                    "kotlin/com/example/Source.kt",
+                    """
+                    @file:Incubating
+                    package com.example
+
+                    import org.gradle.api.Incubating
+
+                    ${annotatedKotlinMembers.lineSequence().filter { !it.contains("Incubating") }.joinToString("\n")}
+
+                    /** @since 2.0 */
+                    const val cathedral = "cathedral"
+                    """
+                )
+            }
+        ) {
+
+            assertHasNoWarning()
+            assertHasInformation(
+                newApi("Class", "SourceKt"),
+                newApi("Field", "cathedral"),
+                newApi("Method", "SourceKt.foo()"),
+                newApi("Method", "SourceKt.fooExt(int)"),
+                newApi("Method", "SourceKt.fooExt(java.lang.String)"),
+                newApi("Method", "SourceKt.getBar()"),
+                newApi("Method", "SourceKt.getBarExt(java.lang.String)"),
+                newApi("Method", "SourceKt.getBazar()"),
+                newApi("Method", "SourceKt.getBazarExt(int)"),
+                newApi("Method", "SourceKt.getBazool()"),
+                newApi("Method", "SourceKt.getBool()"),
+                newApi("Method", "SourceKt.invoke(java.lang.String,java.lang.String,kotlin.jvm.functions.Function1)"),
+                newApi("Method", "SourceKt.isBool()"),
+                newApi("Method", "SourceKt.isFool()"),
+                newApi("Method", "SourceKt.setBazar(java.lang.String)"),
+                newApi("Method", "SourceKt.setBazarExt(int,java.lang.String)"),
+                newApi("Method", "SourceKt.setBazool(boolean)"),
+                newApi("Method", "SourceKt.setFool(boolean)"),
+                newApi("Method", "SourceKt.wrap(java.lang.Iterable,java.util.Iterator,java.util.ListIterator)"),
+                newApi("Method", "SourceKt.wrap(java.util.Collection)"),
+                newApi("Method", "SourceKt.wrap(java.util.HashMap,java.util.LinkedHashMap)"),
+                newApi("Method", "SourceKt.wrap(java.util.List,java.util.ArrayList)"),
+                newApi("Method", "SourceKt.wrap(java.util.Map,java.util.Map\$Entry)"),
+                newApi("Method", "SourceKt.wrap(java.util.Set,java.util.HashSet,java.util.LinkedHashSet)"),
+            )
+        }
+    }
+
+    @Test
+    fun `new top-level kotlin member with @JvmName`() {
+        checkNotBinaryCompatibleKotlin(
+            v1 = """
+                val existing = "file-facade-class"
+            """,
+            v2 = """
+                val existing = "file-facade-class"
+
+                @JvmName("fooRenamed")
+                fun String.foo() {}
+            """
+        ) {
+            assertHasNoInformation()
+            assertHasNoWarning()
+            assertHasErrors(
+                added("Method", "SourceKt.fooRenamed(java.lang.String)"),
+            )
+        }
+
+        checkBinaryCompatibleKotlin(
+            v1 = """
+                val existing = "file-facade-class"
+            """,
+            v2 = """
+                val existing = "file-facade-class"
+
+                /** @since 2.0 */
+                @Incubating
+                @JvmName("fooRenamed")
+                fun String.foo() {}
+            """
+        ) {
+            assertHasNoWarning()
+            assertHasInformation(
+                newApi("Method", "SourceKt.fooRenamed(java.lang.String)"),
+            )
+        }
+    }
+
+    @Test
+    fun `new top-level kotlin property with @JvmName accessors`() {
+
+        checkBinaryCompatibleKotlin(
+            v1 = """
+                val existing = "file-facade-class"
+            """,
+            v2 = """
+                val existing = "file-facade-class"
+
+                /** @since 2.0 */
+                @get:Incubating
+                @get:JvmName("customBar")
+                val bar: String
+                    get() = "bar"
+
+                /** @since 2.0 */
+                @get:Incubating
+                @set:Incubating
+                @get:JvmName("customBazGet")
+                @set:JvmName("customBazSet")
+                var baz: String
+                    get() = "baz"
+                    set(value) {}
+            """
+        ) {
+            assertHasNoWarning()
+            assertHasInformation(
+                newApi("Method", "SourceKt.customBar()"),
+                newApi("Method", "SourceKt.customBazGet()"),
+                newApi("Method", "SourceKt.customBazSet(java.lang.String)"),
+            )
+        }
+    }
+
+    @Test
+    fun `new top-level kotlin function with @JvmOverloads`() {
+        checkBinaryCompatibleKotlin(
+            v1 = """
+                val existing = "file-facade-class"
+            """,
+            v2 = """
+                val existing = "file-facade-class"
+
+                /** @since 2.0 */
+                @Incubating
+                @JvmOverloads
+                fun foo(a: Int, b: Int = 1, c: String = "") {}
+
+                /** @since 2.0 */
+                @Incubating
+                @JvmOverloads
+                fun String.bar(a: Int, b: Int = 1) {}
+            """
+        ) {
+            assertHasNoWarning()
+            assertHasInformation(
+                newApi("Method", "SourceKt.foo(int)"),
+                newApi("Method", "SourceKt.foo(int,int)"),
+                newApi("Method", "SourceKt.foo(int,int,java.lang.String)"),
+                newApi("Method", "SourceKt.bar(java.lang.String,int)"),
+                newApi("Method", "SourceKt.bar(java.lang.String,int,int)"),
+            )
+        }
+    }
+
+    @Test
+    fun `new constructor with mapped parameter types`() {
+        val baseline = """
+            /** @since 1.0 */
+            class Bar<T>()
+        """
+
+        checkBinaryCompatibleKotlin(
+            v1 = baseline,
+            v2 = """
+                /** @since 1.0 */
+                class Bar<T>() {
+
+                    /** @since 2.0 */
+                    @Incubating
+                    constructor(x: Int) : this()
+
+                    /** @since 2.0 */
+                    @Incubating
+                    constructor(x: String?) : this()
+
+                    /** @since 2.0 */
+                    @Incubating
+                    constructor(x: List<String>) : this()
+
+                    /** @since 2.0 */
+                    @Incubating
+                    constructor(x: T) : this()
+                }
+            """
+        ) {
+            assertEmptyReport()
+        }
+    }
+
+    @Test
+    fun `new top-level kotlin member with generic parameters`() {
+        checkNotBinaryCompatibleKotlin(
+            v1 = """
+                val existing = "file-facade-class"
+            """,
+            v2 = """
+                val existing = "file-facade-class"
+
+                fun <T> foo(t: T) {}
+
+                fun <T : Any> qux(t: T) {}
+
+                fun <T : Number> bar(t: T) {}
+
+                fun <T> String.baz(t: T) {}
+            """
+        ) {
+            assertHasNoInformation()
+            assertHasNoWarning()
+            assertHasErrors(
+                added("Method", "SourceKt.bar(java.lang.Number)"),
+                added("Method", "SourceKt.baz(java.lang.String,java.lang.Object)"),
+                added("Method", "SourceKt.foo(java.lang.Object)"),
+                added("Method", "SourceKt.qux(java.lang.Object)"),
+            )
+        }
+
+        checkBinaryCompatibleKotlin(
+            v1 = """
+                val existing = "file-facade-class"
+            """,
+            v2 = """
+                val existing = "file-facade-class"
+
+                /** @since 2.0 */
+                @Incubating
+                fun <T> foo(t: T) {}
+
+                /** @since 2.0 */
+                @Incubating
+                fun <T : Any> qux(t: T) {}
+
+                /** @since 2.0 */
+                @Incubating
+                fun <T : Number> bar(t: T) {}
+
+                /** @since 2.0 */
+                @Incubating
+                fun <T> String.baz(t: T) {}
+            """
+        ) {
+            assertHasNoWarning()
+            assertHasInformation(
+                newApi("Method", "SourceKt.bar(java.lang.Number)"),
+                newApi("Method", "SourceKt.baz(java.lang.String,java.lang.Object)"),
+                newApi("Method", "SourceKt.foo(java.lang.Object)"),
+                newApi("Method", "SourceKt.qux(java.lang.Object)"),
+            )
+        }
+    }
+
+    @Test
+    fun `new top-level kotlin types`() {
+
+        // Singleton INSTANCE fields of `object`s are public
+
+        checkNotBinaryCompatibleKotlin(
+            v2 = """
+
+            interface Foo
+
+            class Bar
+
+            enum class Bazar
+
+            object Cathedral
+
+            """
+        ) {
+
+            assertHasNoInformation()
+            assertHasNoWarning()
+            assertHasErrors(
+                added("Class", "Bar"),
+                added("Class", "Bazar"),
+                added("Class", "Cathedral"),
+                added("Class", "Foo"),
+            )
+        }
+
+        checkBinaryCompatibleKotlin(
+            v2 = """
+
+            /** @since 2.0 */
+            @Incubating
+            interface Foo
+
+            /** @since 2.0 */
+            @Incubating
+            class Bar
+
+            /** @since 2.0 */
+            @Incubating
+            enum class Bazar
+
+            /** @since 2.0 */
+            @Incubating
+            object Cathedral
+
+            """
+        ) {
+
+            assertHasNoWarning()
+            assertHasInformation(
+                newApi("Class", "Bar"),
+                newApi("Class", "Bazar"),
+                newApi("Class", "Cathedral"),
+                newApi("Class", "Foo"),
+                newApi("Field", "INSTANCE"),
+                newApi("Method", "Bazar.getEntries()"),
+                newApi("Method", "Bazar.valueOf(java.lang.String)"),
+                newApi("Method", "Bazar.values()"),
+            )
+        }
+    }
+
+    @Test
+    fun `new kotlin types members`() {
+
+        val baseline = """
+
+            /** @since 1.0 */
+            interface Foo
+
+            /** @since 1.0 */
+            class Bar()
+
+        """
+
+        checkNotBinaryCompatibleKotlin(
+            v1 = baseline,
+            v2 = """
+
+            /** @since 1.0 */
+            interface Foo : AutoCloseable {
+                fun foo()
+                override fun close()
+            }
+
+            /** @since 1.0 */
+            class Bar() {
+
+                constructor(bar: String) : this()
+
+                $publicKotlinMembers
+            }
+
+            """
+        ) {
+
+            assertHasNoInformation()
+            assertHasNoWarning()
+            assertHasErrors(
+                added("Constructor", "Bar(java.lang.String)"),
+                added("Method", "Bar.foo()"),
+                added("Method", "Bar.fooExt(int)"),
+                added("Method", "Bar.fooExt(java.lang.String)"),
+                added("Method", "Bar.getBar()"),
+                added("Method", "Bar.getBarExt(java.lang.String)"),
+                added("Method", "Bar.getBazar()"),
+                added("Method", "Bar.getBazarExt(int)"),
+                added("Method", "Bar.getBazool()"),
+                added("Method", "Bar.getBool()"),
+                added("Method", "Bar.invoke(java.lang.String,java.lang.String,kotlin.jvm.functions.Function1)"),
+                added("Method", "Bar.isBool()"),
+                added("Method", "Bar.isFool()"),
+                added("Method", "Bar.setBazar(java.lang.String)"),
+                added("Method", "Bar.setBazarExt(int,java.lang.String)"),
+                added("Method", "Bar.setBazool(boolean)"),
+                added("Method", "Bar.setFool(boolean)"),
+                added("Method", "Foo.foo()"),
+                added("Method", "Bar.wrap(java.lang.Iterable,java.util.Iterator,java.util.ListIterator)"),
+                added("Method", "Bar.wrap(java.util.Collection)"),
+                added("Method", "Bar.wrap(java.util.HashMap,java.util.LinkedHashMap)"),
+                added("Method", "Bar.wrap(java.util.List,java.util.ArrayList)"),
+                added("Method", "Bar.wrap(java.util.Map,java.util.Map\$Entry)"),
+                added("Method", "Bar.wrap(java.util.Set,java.util.HashSet,java.util.LinkedHashSet)"),
+            )
+        }
+
+        checkBinaryCompatibleKotlin(
+            v1 = baseline,
+            v2 = """
+
+            /** @since 1.0 */
+            interface Foo {
+
+                /** @since 2.0 */
+                @Incubating
+                fun foo()
+            }
+
+            /** @since 1.0 */
+            class Bar() {
+
+                /** @since 2.0 */
+                @Incubating
+                constructor(bar: String) : this()
+
+                $annotatedKotlinMembers
+            }
+
+            """
+        ) {
+
+            assertHasNoWarning()
+            assertHasInformation(
+                newApi("Method", "Bar.foo()"),
+                newApi("Method", "Bar.fooExt(int)"),
+                newApi("Method", "Bar.fooExt(java.lang.String)"),
+                newApi("Method", "Bar.getBar()"),
+                newApi("Method", "Bar.getBarExt(java.lang.String)"),
+                newApi("Method", "Bar.getBazar()"),
+                newApi("Method", "Bar.getBazarExt(int)"),
+                newApi("Method", "Bar.getBazool()"),
+                newApi("Method", "Bar.getBool()"),
+                newApi("Method", "Bar.invoke(java.lang.String,java.lang.String,kotlin.jvm.functions.Function1)"),
+                newApi("Method", "Bar.isBool()"),
+                newApi("Method", "Bar.isFool()"),
+                newApi("Method", "Bar.setBazar(java.lang.String)"),
+                newApi("Method", "Bar.setBazarExt(int,java.lang.String)"),
+                newApi("Method", "Bar.setBazool(boolean)"),
+                newApi("Method", "Bar.setFool(boolean)"),
+                newApi("Method", "Foo.foo()"),
+                newApi("Method", "Bar.wrap(java.lang.Iterable,java.util.Iterator,java.util.ListIterator)"),
+                newApi("Method", "Bar.wrap(java.util.Collection)"),
+                newApi("Method", "Bar.wrap(java.util.HashMap,java.util.LinkedHashMap)"),
+                newApi("Method", "Bar.wrap(java.util.List,java.util.ArrayList)"),
+                newApi("Method", "Bar.wrap(java.util.Map,java.util.Map\$Entry)"),
+                newApi("Method", "Bar.wrap(java.util.Set,java.util.HashSet,java.util.LinkedHashSet)"),
+            )
+        }
+    }
+
+    @Test
+    fun `a member does not inherit @since from its declaring class`() {
+        checkNotBinaryCompatibleKotlin(
+            v2 = """
+
+            /** @since 2.0 */
+            @Incubating
+            interface Foo {
+
+                @Incubating
+                fun foo()
+            }
+
+            """
+        ) {
+            assertHasNoWarning()
+            assertHasErrors(
+                listOf("Method com.example.Foo.foo(): Is not annotated with @since 2.0."),
+            )
+        }
+    }
+
+    @Test
+    fun `a primary constructor property carries its own @since`() {
+        checkNotBinaryCompatibleKotlin(
+            v2 = """
+
+            /** @since 2.0 */
+            @Incubating
+            class Bar
+            /** @since 2.0 */
+            @Incubating
+            constructor(
+                @get:Incubating
+                val baz: String
+            )
+
+            """
+        ) {
+            assertHasNoWarning()
+            assertHasErrors(
+                listOf("Method com.example.Bar.getBaz(): Is not annotated with @since 2.0."),
+            )
+        }
+
+        checkBinaryCompatibleKotlin(
+            v2 = """
+
+            /** @since 2.0 */
+            @Incubating
+            class Bar
+            /** @since 2.0 */
+            @Incubating
+            constructor(
+                /** @since 2.0 */
+                @get:Incubating
+                val baz: String
+            )
+
+            """
+        )
+    }
+
+    @Test
+    fun `members synthesized by interface delegation do not require @since`() {
+        checkBinaryCompatibleKotlin(
+            v2 = """
+
+            /** @since 2.0 */
+            @Incubating
+            interface Foo {
+
+                /** @since 2.0 */
+                @Incubating
+                fun foo()
+            }
+
+            /** @since 2.0 */
+            @Incubating
+            class Bar
+            /** @since 2.0 */
+            @Incubating
+            constructor(delegate: Foo) : Foo by delegate
+
+            """
+        )
+    }
+
+    @Test
+    fun `a new overload is not treated as inherited when a same-arity supertype method has different parameter types`() {
+        checkNotBinaryCompatibleKotlin(
+            v2 = """
+
+            /** @since 2.0 */
+            @Incubating
+            open class Foo {
+
+                /** @since 2.0 */
+                @Incubating
+                open fun foo(value: Int) {}
+            }
+
+            /** @since 2.0 */
+            @Incubating
+            class Bar : Foo() {
+
+                @Incubating
+                fun foo(value: String) {}
+            }
+
+            """
+        ) {
+            assertHasNoWarning()
+            assertHasErrors(
+                listOf("Method com.example.Bar.foo(java.lang.String): Is not annotated with @since 2.0."),
+            )
+        }
+    }
+
+    @Test
+    fun `compiler-generated companion, data class and default-argument members do not require @since`() {
+        checkBinaryCompatibleKotlin(
+            v2 = """
+
+            /** @since 2.0 */
+            @Incubating
+            class WithCompanion {
+
+                /** @since 2.0 */
+                @Incubating
+                companion object
+            }
+
+            /** @since 2.0 */
+            @Incubating
+            data class DataThing
+            /** @since 2.0 */
+            @Incubating
+            constructor(
+                /** @since 2.0 */
+                @get:Incubating
+                val value: String
+            )
+
+            /** @since 2.0 */
+            @Incubating
+            class WithDefaults {
+
+                /** @since 2.0 */
+                @Incubating
+                fun withDefault(a: Int = 0) {}
+            }
+
+            """
+        )
+    }
+
+    @Test
+    fun `a non-last vararg parameter is matched to its compiled array parameter`() {
+        checkBinaryCompatibleKotlin(
+            v2 = """
+
+            /** @since 2.0 */
+            @Incubating
+            class Bar {
+
+                /** @since 2.0 */
+                @Incubating
+                fun foo(vararg xs: String, other: Int) {}
+            }
+
+            """
+        )
+    }
+}

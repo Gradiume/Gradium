@@ -1,0 +1,242 @@
+/*
+ * Copyright 2017 the original author or authors.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *      http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+package org.gradle.api.internal.provider
+
+import org.gradle.api.Task
+import org.gradle.api.provider.PresentProvider
+import org.gradle.api.provider.Provider
+import org.gradle.testfixtures.ProjectBuilder
+import spock.lang.Issue
+import spock.lang.Specification
+
+import static org.gradle.api.internal.provider.ProviderTestUtil.withProducer
+import static org.gradle.api.internal.provider.ProviderTestUtil.withValues
+
+class DefaultProviderFactoryTest extends Specification implements ProviderAssertions {
+
+    static final PROJECT = ProjectBuilder.builder().build()
+    static final File TEST_FILE = PROJECT.file('someDir')
+
+    def providerFactory = new DefaultProviderFactory()
+
+    def "cannot create provider for null value"() {
+        when:
+        providerFactory.provider(null)
+
+        then:
+        def t = thrown(NullPointerException)
+        t.message == 'Value cannot be null'
+    }
+
+    def "can create provider for #type"() {
+        when:
+        def provider = providerFactory.provider({ value })
+
+        then:
+        provider != null
+        provider.get() == value
+
+        where:
+        type      | value
+        Boolean   | true
+        Byte      | Byte.valueOf((byte) 0)
+        Short     | Short.valueOf((short) 0)
+        Integer   | Integer.valueOf(0)
+        Long      | 4L
+        Float     | 5.5f
+        Double    | 6.6d
+        Character | '\u1234'
+        String    | 'hello'
+        File      | TEST_FILE
+    }
+
+    def "absent() returns a provider that has no value"() {
+        given:
+        def provider = providerFactory.absent()
+
+        expect:
+        !provider.present
+        provider.getOrNull() == null
+
+        when:
+        provider.get()
+
+        then:
+        thrown(MissingValueException)
+    }
+
+    def "present() returns a fixed value provider for #value"() {
+        when:
+        def provider = providerFactory.present(value)
+
+        then:
+        provider instanceof Providers.FixedValueProvider
+        provider instanceof PresentProvider
+        provider.present
+        provider.get() == value
+        provider.getOrNull() == value
+
+        where:
+        value << [true, 4L, 'hello', TEST_FILE]
+    }
+
+    def "present() provider ignores orElse"() {
+        given:
+        def provider = providerFactory.present('value')
+
+        expect:
+        provider.orElse('other').is(provider)
+        provider.orElse(providerFactory.absent()).is(provider)
+    }
+
+    def "cannot create present() provider for null value"() {
+        when:
+        providerFactory.present(null)
+
+        then:
+        def t = thrown(NullPointerException)
+        t.message == 'Value cannot be null'
+    }
+
+    def "presentIfNotNull() returns a provider with the given value when non-null"() {
+        given:
+        def provider = providerFactory.presentIfNotNull('hello')
+
+        expect:
+        provider.present
+        provider.get() == 'hello'
+    }
+
+    def "presentIfNotNull() returns a provider that has no value for null"() {
+        given:
+        def provider = providerFactory.presentIfNotNull(null)
+
+        expect:
+        !provider.present
+        provider.getOrNull() == null
+    }
+
+    def "can zip two providers"() {
+        def big = withValues("big")
+        def black = withValues("black")
+        def cat = withValues("cat")
+
+        when:
+        def zipped = providerFactory.zip(
+                providerFactory.zip(big, black) { s1, s2 -> "$s1 $s2" } ,
+                cat) { s1, s2 -> "${s1.capitalize()} ${s2}"}
+
+        then:
+        zipped instanceof Provider
+        zipped.get() == 'Big black cat'
+    }
+
+    @Issue("https://github.com/gradle/gradle/issues/12307")
+    def "cannot zip when #side provider is null"() {
+        when:
+        providerFactory.zip(left, right) { a, b -> a + b }
+
+        then:
+        def e = thrown(NullPointerException)
+        e.message == "Cannot zip a provider with a null provider."
+
+        where:
+        side    | left              | right
+        "right" | Providers.of("a") | null
+        "left"  | null              | Providers.of("b")
+    }
+
+    @Issue("https://github.com/gradle/gradle/issues/12307")
+    def "cannot zip using a null combiner"() {
+        when:
+        providerFactory.zip(Providers.of("a"), Providers.of("b"), null)
+
+        then:
+        def e = thrown(NullPointerException)
+        e.message == "Cannot zip providers using a null combiner."
+    }
+
+    def "cannot look up #method using a null provider"() {
+        when:
+        providerFactory."$method"((Provider) null)
+
+        then:
+        def e = thrown(NullPointerException)
+        e.message == "Cannot look up Gradle properties using a null provider."
+
+        where:
+        method << ["gradleProperty", "gradlePropertiesPrefixedBy"]
+    }
+
+    def "can zip two providers and use null to remove the value"() {
+        def not = providerFactory.provider { "not" }
+        def important = providerFactory.provider { "important" }
+
+        when:
+        def zipped = providerFactory.zip(not, important) { s1, s2 -> null }
+
+        then:
+        zipped instanceof Provider
+        !zipped.isPresent()
+        zipped.getOrNull() == null
+    }
+
+    def "can zip two providers and use null to remove the value, and it is live"() {
+        def provider = withValues("accepted", "accepted", "rejected", "rejected")
+        def second = providerFactory.provider { "value" }
+
+        when:
+        def zipped = providerFactory.zip(provider, second) { s1, s2 ->
+            s1 == "accepted" ? "$s1 $s2" : null
+        }
+
+        then:
+        zipped instanceof Provider
+        zipped.isPresent()
+        zipped.get() == "accepted value"
+
+        then:
+        !zipped.isPresent()
+        zipped.getOrNull() == null
+    }
+
+    def "can zip two providers of arbitrary types"() {
+        def a = withValues("big")
+        def b = withValues(123L)
+
+        when:
+        def zipped = providerFactory.zip(a, b) { x, y -> x.length() + y }
+
+        then:
+        zipped instanceof Provider
+        zipped.get() == 126
+    }
+
+    def "zip tracks task dependencies"() {
+        def task1 = Stub(Task)
+        def a = withProducer(Integer, task1, 5)
+        def task2 = Stub(Task)
+        def b = withProducer(String, task2, "Hello")
+
+        when:
+        def zipped = providerFactory.zip(a, b) { i, s -> s.length() == i } as ProviderInternal<Boolean>
+
+        then:
+        assertHasProducer(zipped, task1, task2)
+        zipped.get() == true
+    }
+}

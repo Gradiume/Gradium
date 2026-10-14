@@ -1,0 +1,65 @@
+</div>
+<!-- end div class="chapter" -->
+
+</div>
+<!-- end div class="content" -->
+
+</main>
+<!-- end main -->
+
+<!-- Site footer: injected by documentation-portal at publish time (SiteChromeReplacingTransformer). -->
+<!-- site-footer-placeholder -->
+
+</div>
+<!-- end div class="layout" -->
+
+<script type="text/javascript">
+    function getCurrentChapterFileName(givenUrl) {
+        var currentChapterFileName = givenUrl.substr(givenUrl.lastIndexOf("/") + 1);
+        if (currentChapterFileName === "index.html" || currentChapterFileName === "") {
+            currentChapterFileName = givenUrl.substr(0, givenUrl.lastIndexOf("/"));
+            currentChapterFileName = currentChapterFileName.substr(currentChapterFileName.lastIndexOf("/") + 1) + "/index.html";
+        }
+        return currentChapterFileName;
+    }
+
+    // The media query indicating that a device is a desktop.
+    // The `min-width: 64rem` definition should be aligned to
+    // the one of `css/manual.css`.
+    const desktopMediaQuery = window.matchMedia("screen and (min-width: 64rem)");
+
+    [].forEach.call(document.querySelectorAll(".docs-navigation a[href$='/" + getCurrentChapterFileName(window.location.pathname) + "']"), function (link) {
+        // Add "active" to all links same as current URL
+        link.classList.add("active");
+
+        // Expand all parent navigation
+        var parentListEl = link.closest("li");
+        while (parentListEl !== null) {
+            var dropDownEl = parentListEl.querySelector(".nav-dropdown");
+            if (dropDownEl !== null) {
+                dropDownEl.classList.add("expanded");
+            }
+            parentListEl = parentListEl.parentNode.closest("li");
+        }
+
+        // Only scroll if the device is a desktop.
+        //
+        // Mobile's `docs-navigation` is always at bottom of `content`,
+        // so we should not slide down to where `docs-navigation` lays.
+        if (desktopMediaQuery.matches) {
+            // Scroll to center of the page
+            link.scrollIntoView({ block: 'nearest' });
+        }
+    });
+
+    // Expand/contract multi-level side navigation
+    [].forEach.call(document.querySelectorAll(".docs-navigation .nav-dropdown"), function registerSideNavActions(collapsibleElement) {
+        collapsibleElement.addEventListener("click", function toggleExpandedSideNav(evt) {
+            evt.preventDefault();
+            evt.target.classList.toggle("expanded");
+            evt.target.setAttribute("aria-expanded", evt.target.classList.contains("expanded").toString());
+            return false;
+        }, false);
+    });
+
+</script>

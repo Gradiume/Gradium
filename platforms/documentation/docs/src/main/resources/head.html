@@ -1,0 +1,74 @@
+<!-- Fonts -->
+<link crossorigin href="//assets.gradle.com" rel="preconnect">
+<link href="https://fonts.googleapis.com/css?family=Inconsolata:400,700" rel="stylesheet"/>
+
+<!-- Theme -->
+<link id="hljs-theme" rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.11.1/styles/stackoverflow-light.min.css">
+<script>
+    // Tri-state theme: localStorage.theme is 'light', 'dark', or 'system' (or
+    // absent, treated as 'system'). 'system' follows OS `prefers-color-scheme`
+    // and responds live to OS-theme changes; explicit 'light' or 'dark' pins
+    // the theme until the user toggles again.
+    (function() {
+        var LIGHT = 'https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.11.1/styles/stackoverflow-light.min.css';
+        var DARK = 'https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.11.1/styles/stackoverflow-dark.min.css';
+        var mql = window.matchMedia('(prefers-color-scheme: dark)');
+        var hljsEl = document.getElementById('hljs-theme');
+        function stored() {
+            try { return localStorage.getItem('theme'); } catch (err) { return null; }
+        }
+        function followSystem() {
+            var t = stored();
+            return t !== 'light' && t !== 'dark';
+        }
+        function apply(theme) {
+            document.documentElement.setAttribute('data-theme', theme);
+            if (hljsEl) { hljsEl.href = theme === 'dark' ? DARK : LIGHT; }
+        }
+        function resolve() {
+            var t = stored();
+            if (t === 'light' || t === 'dark') { return t; }
+            return mql.matches ? 'dark' : 'light';
+        }
+        apply(resolve());
+        mql.addEventListener('change', function(e) {
+            if (followSystem()) { apply(e.matches ? 'dark' : 'light'); }
+        });
+    })();
+</script>
+
+<!-- Highlight.js -->
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.11.1/highlight.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.11.1/languages/xml.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.11.1/languages/kotlin.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.11.1/languages/groovy.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.11.1/languages/java.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.11.1/languages/properties.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.11.1/languages/gradle.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.11.1/languages/bash.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.11.1/languages/shell.min.js"></script>
+<script>
+    const asciidocCalloutPlugin = {
+      'before:highlightElement': ({ el }) => {
+        // Matches the <i class="conum"...></i><b>(1)</b> pattern
+        const calloutPattern = /<i class="conum" data-value="(\d+)"><\/i><b>\(\d+\)<\/b>/g;
+        el.innerHTML = el.innerHTML.replace(calloutPattern, (match, val1) => {
+          // We stash it as a unique string highlight.js will ignore
+          return `___CONUM_${val1}___`;
+        });
+      },
+      'after:highlightElement': ({ el }) => {
+        // Restore the exact HTML structure you started with
+        el.innerHTML = el.innerHTML.replace(/___CONUM_(\d+)___/g, (match, num) => {
+          return `<i class="conum" data-value="${num}"></i><b class="conum">(${num})</b>`;
+        });
+      }
+    };
+    // Ensure this runs after hljs is loaded but before highlightAll
+    if (typeof hljs !== 'undefined') {
+      hljs.addPlugin(asciidocCalloutPlugin);
+      hljs.highlightAll();
+    } else {
+      console.error('Highlight.js (hljs) is not available; syntax highlighting has been skipped.');
+    }
+</script>

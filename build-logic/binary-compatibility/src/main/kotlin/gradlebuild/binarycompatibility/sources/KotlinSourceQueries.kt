@@ -1,0 +1,607 @@
+/*
+ * Copyright 2020 the original author or authors.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *      http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+package gradlebuild.binarycompatibility.sources
+
+import gradlebuild.basics.decapitalize
+import gradlebuild.binarycompatibility.isSynthetic
+import gradlebuild.binarycompatibility.metadata.KotlinMetadataQueries
+import japicmp.model.JApiClass
+import japicmp.model.JApiCompatibility
+import japicmp.model.JApiConstructor
+import japicmp.model.JApiField
+import japicmp.model.JApiMethod
+import javassist.CtBehavior
+import javassist.CtClass
+import javassist.CtConstructor
+import javassist.CtField
+import javassist.CtMember
+import javassist.CtMethod
+import javassist.Modifier
+import org.jetbrains.kotlin.descriptors.annotations.AnnotationUseSiteTarget
+import org.jetbrains.kotlin.lexer.KtTokens
+import org.jetbrains.kotlin.psi.KtAnnotationEntry
+import org.jetbrains.kotlin.psi.KtClass
+import org.jetbrains.kotlin.psi.KtClassOrObject
+import org.jetbrains.kotlin.psi.KtConstructor
+import org.jetbrains.kotlin.psi.KtDeclaration
+import org.jetbrains.kotlin.psi.KtFile
+import org.jetbrains.kotlin.psi.KtFunction
+import org.jetbrains.kotlin.psi.KtObjectDeclaration
+import org.jetbrains.kotlin.psi.KtParameter
+import org.jetbrains.kotlin.psi.KtPrimaryConstructor
+import org.jetbrains.kotlin.psi.KtProperty
+import org.jetbrains.kotlin.psi.KtStringTemplateExpression
+import org.jetbrains.kotlin.psi.KtTypeParameterListOwner
+import org.jetbrains.kotlin.psi.KtTypeReference
+import org.jetbrains.kotlin.psi.psiUtil.collectDescendantsOfType
+import org.jetbrains.kotlin.psi.psiUtil.containingClassOrObject
+
+
+internal
+object KotlinSourceQueries {
+
+    fun isOverrideMethod(method: JApiMethod): (KtFile) -> Boolean = { ktFile ->
+        val ctMethod = method.newMethod.get()
+        ktFile.kotlinDeclarationSatisfies(ctMethod.declaringClass, ctMethod) { ktMember ->
+            ktMember.hasModifier(KtTokens.OVERRIDE_KEYWORD)
+        }
+    }
+
+    fun getSince(member: JApiCompatibility): (KtFile) -> SinceTagStatus = { ktFile ->
+        val ctMember = member.newCtMember
+        val ctDeclaringClass = ctMember.declaringClass
+        when (ctMember) {
+            is CtClass -> ktFile.ktClassOf(ctMember).getSinceStatus()
+            is CtField -> ktFile.getSince(ctDeclaringClass, ctMember)
+            is CtConstructor -> ktFile.getSince(ctDeclaringClass, ctMember)
+            is CtMethod -> ktFile.getSince(ctDeclaringClass, ctMember)
+            else -> error("Unsupported japicmp member type '${member::class}'")
+        }
+    }
+
+    fun isGenerated(member: JApiCompatibility): (KtFile) -> Boolean = { ktFile ->
+        when (val ctMember = member.newCtMember) {
+            is CtMethod -> ctMember.isSynthetic || ctMember.hasMangledName ||
+                ctMember.isGenerated(ktFile, ctMember.declaringClass) ||
+                ctMember.isInheritedFromSupertype()
+            is CtClass -> false
+            is CtField -> ctMember.hasMangledName ||
+                ctMember.isGeneratedObjectInstanceField(ktFile, ctMember.declaringClass) ||
+                ctMember.isGeneratedCompanionField(ktFile, ctMember.declaringClass)
+            is CtConstructor -> ctMember.isGeneratedConstructor(ktFile, ctMember.declaringClass)
+            else -> error("Unsupported japicmp member type '${member::class}'")
+        }
+    }
+
+    private
+    fun KtFile.getSince(declaringClass: CtClass, field: CtField): SinceTagStatus {
+        val fqn = "${declaringClass.baseQualifiedKotlinName}.${field.name}"
+        return collectDescendantsOfType<KtProperty>()
+            .firstOrNull { it.fqName?.asString() == fqn }
+            .getSinceStatus()
+    }
+
+    private
+    fun KtFile.getSince(declaringClass: CtClass, constructor: CtConstructor): SinceTagStatus {
+        val ktClass = ktClassOf(declaringClass) as? KtClass
+        return ktClass?.secondaryConstructors?.singleOrNull { constructor.matches(it) }.getSinceStatus()
+    }
+
+    private
+    fun KtFile.getSince(declaringClass: CtClass, method: CtMethod): SinceTagStatus {
+        val qualifiedBaseName = declaringClass.baseQualifiedKotlinName
+
+        val functions = collectKtFunctionsFor(qualifiedBaseName, method)
+        if (functions.isNotEmpty()) {
+            return getSinceStatus(functions)
+        }
+
+        val properties = collectKtPropertiesFor(qualifiedBaseName, method)
+        if (properties.isNotEmpty()) {
+            return getSinceStatus(properties)
+        }
+
+        val constructorProperties = collectKtConstructorPropertiesFor(qualifiedBaseName, method)
+        if (constructorProperties.isNotEmpty()) {
+            return getSinceStatus(constructorProperties)
+        }
+
+        return SinceTagStatus.Missing
+    }
+
+    private
+    fun getSinceStatus(declarations: List<KtDeclaration>): SinceTagStatus {
+        val sinceTags = declarations.map { it.getSince() }
+        return when {
+            sinceTags.isEmpty() -> SinceTagStatus.Missing
+            sinceTags.all { it == sinceTags.first() } -> {
+                sinceTags.first()?.let { SinceTagStatus.Present(it) } ?: SinceTagStatus.Missing
+            }
+
+            else -> SinceTagStatus.Inconsistent(sinceTags)
+        }
+    }
+
+    private
+    fun KtDeclaration?.getSinceStatus(): SinceTagStatus =
+        this?.getSince()?.let { SinceTagStatus.Present(it) } ?: SinceTagStatus.Missing
+}
+
+private
+fun CtMethod.isGenerated(ktFile: KtFile, declaringClass: CtClass): Boolean =
+    isGeneratedEnumMethod(declaringClass) || isGeneratedDataClassMethod(ktFile, declaringClass)
+
+
+private
+fun CtMethod.isGeneratedEnumMethod(declaringClass: CtClass): Boolean =
+    declaringClass.isEnum && when (name) {
+        "values" -> parameterTypes.isEmpty()
+        "valueOf" -> parameterTypes.singleOrNull()?.name == "java.lang.String"
+        "getEntries" -> parameterTypes.isEmpty()
+        else -> false
+    }
+
+
+private
+val COMPONENT_METHOD_REGEX = "^component\\d+$".toRegex()
+
+
+private
+fun CtMethod.isGeneratedDataClassMethod(ktFile: KtFile, declaringClass: CtClass): Boolean {
+    val ktClass = ktFile.ktClassOf(declaringClass) as? KtClass ?: return false
+    if (!ktClass.isData()) {
+        return false
+    }
+    return name == "copy" || (name.matches(COMPONENT_METHOD_REGEX) && parameterTypes.isEmpty())
+}
+
+
+private
+val CtMember.hasMangledName: Boolean
+    get() = name.contains('$')
+
+
+private
+fun CtField.isGeneratedObjectInstanceField(ktFile: KtFile, declaringClass: CtClass): Boolean =
+    name == "INSTANCE" && ktFile.ktClassOf(declaringClass) is KtObjectDeclaration
+
+
+private
+fun CtField.isGeneratedCompanionField(ktFile: KtFile, declaringClass: CtClass): Boolean =
+    (ktFile.ktClassOf(declaringClass) as? KtClassOrObject)
+        ?.companionObjects?.any { (it.name ?: "Companion") == name } == true
+
+
+private
+fun CtConstructor.isGeneratedConstructor(ktFile: KtFile, declaringClass: CtClass): Boolean {
+    val ktClass = ktFile.ktClassOf(declaringClass) as? KtClass ?: return false
+    val primaryConstructor = ktClass.primaryConstructor
+        ?: return parameterTypes.isEmpty()
+    return matches(primaryConstructor)
+}
+
+
+private
+fun CtConstructor.matches(ktConstructor: KtConstructor<*>): Boolean {
+    if (ktConstructor.valueParameters.size != parameterTypes.size) {
+        return false
+    }
+    val typeParameterBounds = (ktConstructor.containingClassOrObject as? KtTypeParameterListOwner).typeParameterBounds
+    return parameterTypes.withIndex().all { (index, paramType) ->
+        paramType.isLikelyEquivalentTo(ktConstructor.valueParameters[index].typeReference!!, typeParameterBounds)
+    }
+}
+
+
+private
+fun KtFile.kotlinDeclarationSatisfies(declaringClass: CtClass, method: CtMethod, predicate: (KtDeclaration) -> Boolean): Boolean {
+
+    val qualifiedBaseName = declaringClass.baseQualifiedKotlinName
+
+    val functions = collectKtFunctionsFor(qualifiedBaseName, method)
+    if (functions.isNotEmpty()) {
+        return functions.all(predicate)
+    }
+
+    val properties = collectKtPropertiesFor(qualifiedBaseName, method)
+    return properties.isNotEmpty() && properties.all(predicate)
+}
+
+
+private
+fun KtFile.collectKtFunctionsFor(qualifiedBaseName: String, method: CtMethod): List<KtFunction> {
+
+    val paramCount = method.parameterTypes.size
+    val couldBeExtensionFunction = paramCount > 0
+    val paramCountWithReceiver = paramCount - 1
+
+    return collectDescendantsOfType { ktFunction ->
+        // Name check
+        val fqName = ktFunction.fqName ?: return@collectDescendantsOfType false
+        if (fqName.parent().asString() != qualifiedBaseName || ktFunction.jvmName != method.name) {
+            return@collectDescendantsOfType false
+        }
+
+        // Preliminary extension function check
+        val allowJvmOverloads = ktFunction.hasJvmOverloads
+        val extensionCandidate = couldBeExtensionFunction && ktFunction.receiverTypeReference != null &&
+            method.firstParameterMatches(ktFunction.receiverTypeReference!!, ktFunction.typeParameterBounds) &&
+            ktFunction.acceptsValueParameterCount(paramCountWithReceiver, allowJvmOverloads)
+        if (!(extensionCandidate || ktFunction.acceptsValueParameterCount(paramCount, allowJvmOverloads))) {
+            return@collectDescendantsOfType false
+        }
+        val isVarargs = Modifier.isVarArgs(method.modifiers)
+        val typeParameterBounds = ktFunction.typeParameterBounds
+
+        // Parameter type check
+        method.parameterTypes
+            .asSequence()
+            // Drop the receiver if present
+            .drop(if (extensionCandidate) 1 else 0)
+            .withIndex()
+            .all {
+                val ktParam = ktFunction.valueParameters[it.index]
+                val ktParamType = ktParam.typeReference!!
+                it.value.isLikelyEquivalentTo(ktParamType, typeParameterBounds) ||
+                    ((isVarargs || ktParam.isVarArg) && it.value.componentType?.isLikelyEquivalentTo(ktParamType, typeParameterBounds) == true)
+            }
+    }
+}
+
+
+/**
+ * Type parameters declared by this owner, mapped to their upper bound (null when unbounded).
+ * Used to reconcile a source type parameter with its erased binary type.
+ */
+private
+val KtTypeParameterListOwner?.typeParameterBounds: Map<String, KtTypeReference?>
+    get() = this?.typeParameters.orEmpty().associate { it.name!! to it.extendsBound }
+
+private
+val KtFunction.typeParameterBounds: Map<String, KtTypeReference?>
+    get() = (containingClassOrObject as? KtTypeParameterListOwner).typeParameterBounds +
+        typeParameters.associate { it.name!! to it.extendsBound }
+
+private
+val KtProperty.typeParameterBounds: Map<String, KtTypeReference?>
+    get() = (containingClassOrObject as? KtTypeParameterListOwner).typeParameterBounds +
+        typeParameters.associate { it.name!! to it.extendsBound }
+
+
+private
+val KtFunction.jvmName: String?
+    get() = annotationEntries.jvmName() ?: fqName?.shortName()?.asString()
+
+
+private
+val KtFunction.hasJvmOverloads: Boolean
+    get() = annotationEntries.any { it.shortName?.asString() == "JvmOverloads" }
+
+
+/**
+ * Whether the function can back a JVM method with the given number of value parameters. With
+ * `@JvmOverloads` the compiler also emits overloads that drop a trailing run of default-valued
+ * parameters, so any prefix ending before such a run is accepted.
+ */
+private
+fun KtFunction.acceptsValueParameterCount(count: Int, allowJvmOverloads: Boolean): Boolean =
+    when {
+        count == valueParameters.size -> true
+        !allowJvmOverloads || count !in 0 until valueParameters.size -> false
+        else -> valueParameters.drop(count).all { it.hasDefaultValue() }
+    }
+
+
+private
+val KtProperty.getterJvmName: String?
+    get() = annotationEntries.jvmName(AnnotationUseSiteTarget.PROPERTY_GETTER)
+
+
+private
+val KtProperty.setterJvmName: String?
+    get() = annotationEntries.jvmName(AnnotationUseSiteTarget.PROPERTY_SETTER)
+
+
+/**
+ * Value of the `@JvmName` annotation with the given use-site target (none for a plain `@JvmName`),
+ * or null when absent.
+ */
+private
+fun List<KtAnnotationEntry>.jvmName(useSiteTarget: AnnotationUseSiteTarget? = null): String? =
+    firstOrNull { it.shortName?.asString() == "JvmName" && it.useSiteTarget?.getAnnotationUseSiteTarget() == useSiteTarget }
+        ?.valueArguments?.firstOrNull()
+        ?.getArgumentExpression()
+        ?.let { it as? KtStringTemplateExpression }
+        ?.entries?.singleOrNull()?.text
+
+
+private
+fun KtFile.collectKtPropertiesFor(qualifiedBaseName: String, method: CtMethod): List<KtProperty> {
+    val renamed = collectRenamedKtPropertiesFor(qualifiedBaseName, method)
+    if (renamed.isNotEmpty()) {
+        return renamed
+    }
+
+    val hasGetGetterName = method.name.matches(propertyGetterNameRegex)
+    val hasIsGetterName = method.name.matches(propertyIsGetterNameRegex)
+    val hasGetterName = hasGetGetterName || hasIsGetterName
+    val hasSetterName = method.name.matches(propertySetterNameRegex)
+    val paramCount = method.parameterTypes.size
+    val returnsVoid = method.returnType.name == "void"
+
+    val couldBeProperty =
+        (hasGetterName && paramCount == 0 && !returnsVoid) || (hasSetterName && paramCount == 1 && returnsVoid)
+
+    val couldBeExtensionProperty =
+        (hasGetterName && paramCount == 1 && !returnsVoid) || (hasSetterName && paramCount == 2 && returnsVoid)
+
+    if (!couldBeProperty && !couldBeExtensionProperty) {
+        return emptyList()
+    }
+
+    val propertyJavaType =
+        if (hasGetterName) method.returnType.name
+        else method.parameterTypes.last().name
+
+    val isBoolean =
+        primitiveTypeStrings[propertyJavaType] == Boolean::class.simpleName
+
+    val propertyNames =
+        if (hasIsGetterName) listOf(method.name)
+        else {
+            val prefixRemoved = method.name.drop(3)
+            if (hasSetterName && isBoolean) listOf("is$prefixRemoved", prefixRemoved.decapitalize())
+            else listOf(prefixRemoved.decapitalize())
+        }
+
+    val propertyQualifiedNames =
+        propertyNames.map { "$qualifiedBaseName.$it" }
+
+    return collectDescendantsOfType { ktProperty ->
+        when {
+            ktProperty.fqName?.asString() !in propertyQualifiedNames -> false
+            couldBeExtensionProperty -> {
+                ktProperty.receiverTypeReference != null &&
+                    method.firstParameterMatches(ktProperty.receiverTypeReference!!, ktProperty.typeParameterBounds)
+            }
+            couldBeProperty -> {
+                ktProperty.receiverTypeReference == null
+            }
+            else -> false
+        }
+    }
+}
+
+
+fun KtFile.collectKtConstructorPropertiesFor(qualifiedBaseName: String, method: CtMethod): List<KtParameter> {
+    val hasGetGetterName = method.name.matches(propertyGetterNameRegex)
+    val hasIsGetterName = method.name.matches(propertyIsGetterNameRegex)
+    val hasSetterName = method.name.matches(propertySetterNameRegex)
+    val paramCount = method.parameterTypes.size
+    val couldBeProperty =
+        ((hasGetGetterName || hasIsGetterName) && paramCount == 0 && method.returnType.name != "void") ||
+            (hasSetterName && paramCount == 1)
+    if (!couldBeProperty) {
+        return emptyList()
+    }
+    val propertyName = if (hasIsGetterName) method.name else method.name.drop(3).decapitalize()
+    return collectDescendantsOfType<KtPrimaryConstructor>()
+        .filter { it.containingClassOrObject?.fqName?.asString() == qualifiedBaseName }
+        .flatMap { it.valueParameters }
+        .filter { it.hasValOrVar() && it.name == propertyName }
+}
+
+
+private
+fun KtFile.collectRenamedKtPropertiesFor(qualifiedBaseName: String, method: CtMethod): List<KtProperty> {
+    val paramCount = method.parameterTypes.size
+    val returnsVoid = method.returnType.name == "void"
+
+    return collectDescendantsOfType { ktProperty ->
+        if (ktProperty.fqName?.parent()?.asString() != qualifiedBaseName) {
+            return@collectDescendantsOfType false
+        }
+        val receiverParamCount = if (ktProperty.receiverTypeReference != null) 1 else 0
+        val receiverMatches = ktProperty.receiverTypeReference
+            ?.let { method.firstParameterMatches(it, ktProperty.typeParameterBounds) } ?: true
+        when (method.name) {
+            ktProperty.getterJvmName -> paramCount == receiverParamCount && !returnsVoid && receiverMatches
+            ktProperty.setterJvmName -> paramCount == receiverParamCount + 1 && returnsVoid && receiverMatches
+            else -> false
+        }
+    }
+}
+
+
+private
+val propertyGetterNameRegex = "^get[A-Z].*$".toRegex()
+
+
+private
+val propertyIsGetterNameRegex = "^is[A-Z].*$".toRegex()
+
+
+private
+val propertySetterNameRegex = "^set[A-Z].*$".toRegex()
+
+
+private
+val JApiCompatibility.newCtMember: CtClassOrCtMember
+    get() = when (this) {
+        is JApiClass -> newClass.get()
+        is JApiConstructor -> newConstructor.get()
+        is JApiField -> newFieldOptional.get()
+        is JApiMethod -> newMethod.get()
+        else -> error("Unsupported japicmp member type '${this::class}'")
+    }
+
+
+/**
+ * [CtClass] or [CtMember].
+ */
+private
+typealias CtClassOrCtMember = Any
+
+
+private
+val CtClassOrCtMember.declaringClass: CtClass
+    get() = when (this) {
+        is CtClass -> declaringClass ?: this
+        is CtMember -> declaringClass
+        else -> error("Unsupported javassist member type '${this::class}'")
+    }
+
+
+private
+val CtClass.baseQualifiedKotlinName: String
+    get() =
+        if (isKotlinFileFacadeClass) packageName
+        else name
+
+
+private
+val CtClass.isKotlinFileFacadeClass: Boolean
+    get() = KotlinMetadataQueries.isKotlinFileFacadeClass(this)
+
+
+private
+fun CtBehavior.firstParameterMatches(
+    ktTypeReference: KtTypeReference,
+    typeParameterBounds: Map<String, KtTypeReference?> = emptyMap()
+): Boolean =
+    parameterTypes.firstOrNull()?.isLikelyEquivalentTo(ktTypeReference, typeParameterBounds) ?: false
+
+
+private
+fun CtClass.isLikelyEquivalentTo(ktTypeReference: KtTypeReference, typeParameterBounds: Map<String, KtTypeReference?> = emptyMap()): Boolean {
+    val ktTypeAsText = ktTypeReference.text
+    if (ktTypeAsText.contains(" -> ")) {
+        // This is a function of some sort
+        return name.startsWith("kotlin.jvm.functions.Function")
+    }
+
+    val ktTypeRawName = ktTypeAsText
+        .trimEnd('?') // nullability is not part of JVM types
+        .substringBefore('<') // generics are not part of parameter types in JVM method signatures
+
+    if (typeParameterBounds.containsKey(ktTypeRawName)) {
+        return typeParameterBounds[ktTypeRawName]
+            ?.let { isLikelyEquivalentTo(it) }
+            ?: (name == "java.lang.Object")
+    }
+
+    val thisTypeAsKt = name.mapJavaTypeToKotlinType()
+    return thisTypeAsKt.endsWith(ktTypeRawName)
+}
+
+
+private
+fun KtFile.ktClassOf(member: CtClass) =
+    collectDescendantsOfType<KtClassOrObject> { it.fqName?.asString() == member.name.replace('$', '.') }.singleOrNull()
+
+
+private
+fun CtMethod.isInheritedFromSupertype(): Boolean {
+    val paramTypeNames = parameterTypes.map { it.name }
+    return declaringClass.supertypes().any { supertype ->
+        supertype.declaredMethods.any {
+            // Match the full erased signature, not just name + arity: an unrelated same-arity
+            // overload (e.g. a new foo(String) beside an inherited foo(Integer)) must still be
+            // checked. A genuine inherited / `by`-delegated method shares the supertype signature.
+            it.name == name && it.parameterTypes.map { param -> param.name } == paramTypeNames
+        }
+    }
+}
+
+
+private
+fun CtClass.supertypes(): Sequence<CtClass> {
+    val seen = mutableSetOf<String>()
+    fun walk(type: CtClass): Sequence<CtClass> = sequence {
+        val parents = buildList {
+            type.superclass?.let { add(it) }
+            addAll(type.interfaces)
+        }
+        for (parent in parents) {
+            if (seen.add(parent.name)) {
+                yield(parent)
+                yieldAll(walk(parent))
+            }
+        }
+    }
+    return walk(this)
+}
+
+
+private
+val SINCE_REGEX = Regex("""@since ([^\s]+)""")
+
+
+fun KtDeclaration.getSince(): String? =
+    docComment?.let { SINCE_REGEX.find(it.text)?.groupValues?.get(1) }
+
+
+private
+fun String.mapJavaTypeToKotlinType(): String {
+    val javaTypeName = this
+    return primitiveTypeStrings[javaTypeName] ?: collectionTypeStrings[javaTypeName] ?: javaTypeName
+}
+
+
+// TODO:kotlin-dsl dedupe with KotlinTypeStrings.primitiveTypeStrings
+private
+val primitiveTypeStrings =
+    mapOf(
+        "java.lang.Object" to "Any",
+        "java.lang.String" to "String",
+        "java.lang.Character" to "Char",
+        "char" to "Char",
+        "java.lang.Boolean" to "Boolean",
+        "boolean" to "Boolean",
+        "java.lang.Byte" to "Byte",
+        "byte" to "Byte",
+        "java.lang.Short" to "Short",
+        "short" to "Short",
+        "java.lang.Integer" to "Int",
+        "int" to "Int",
+        "java.lang.Long" to "Long",
+        "long" to "Long",
+        "java.lang.Float" to "Float",
+        "float" to "Float",
+        "java.lang.Double" to "Double",
+        "double" to "Double"
+    )
+
+
+// See `org.gradle.kotlin.dsl.internal.sharedruntime.codegen.ApiTypeProviderKt.mappedTypeStrings`
+private
+val collectionTypeStrings =
+    mapOf(
+        "java.lang.Iterable" to "kotlin.collections.Iterable",
+        "java.util.Iterator" to "kotlin.collections.Iterator",
+        "java.util.ListIterator" to "kotlin.collections.ListIterator",
+        "java.util.Collection" to "kotlin.collections.Collection",
+        "java.util.List" to "kotlin.collections.List",
+        "java.util.ArrayList" to "kotlin.collections.ArrayList",
+        "java.util.Set" to "kotlin.collections.Set",
+        "java.util.HashSet" to "kotlin.collections.HashSet",
+        "java.util.LinkedHashSet" to "kotlin.collections.LinkedHashSet",
+        "java.util.Map" to "kotlin.collections.Map",
+        "java.util.Map\$Entry" to "kotlin.collections.Map.Entry",
+        "java.util.HashMap" to "kotlin.collections.HashMap",
+        "java.util.LinkedHashMap" to "kotlin.collections.LinkedHashMap"
+    )

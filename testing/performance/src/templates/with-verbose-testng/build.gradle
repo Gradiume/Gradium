@@ -1,0 +1,10 @@
+${original}
+
+dependencies {
+    testImplementation 'org.testng:testng:7.12.0'
+}
+
+test {
+    useTestNG()
+    maxParallelForks = 2
+}

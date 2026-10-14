@@ -1,0 +1,139 @@
+/*
+ * Copyright 2024 the original author or authors.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *      http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+package org.gradle.internal.cc.impl.isolated
+
+import spock.lang.Issue
+
+import static org.gradle.integtests.fixtures.configurationcache.ConfigurationCacheProblemsFixture.resolveConfigurationCacheReportDirectory
+
+class IsolatedProjectsProblemReportingIntegrationTest extends AbstractIsolatedProjectsIntegrationTest {
+
+    def "reports reduced problem details at certain limits"() {
+        settingsFile """
+            include(":a")
+        """
+        createDir("a")
+
+        for (i in 1..150) {
+            buildFile << 'project(":a").version\n'
+        }
+
+        when:
+        isolatedProjectsDiagnosticsFails("help")
+
+        then:
+        outputContains("Configuration cache entry discarded with 150 problems.")
+
+        problems.assertFailureHasProblems(failure) {
+            withProblem("Build file 'build.gradle': line 1: Project ':' cannot access 'Project.version' functionality on another project ':a'")
+            withProblem("Build file 'build.gradle': line 10: Project ':' cannot access 'Project.version' functionality on another project ':a'")
+            withProblem("Build file 'build.gradle': line 100: Project ':' cannot access 'Project.version' functionality on another project ':a'")
+            withProblem("Build file 'build.gradle': line 101: Project ':' cannot access 'Project.version' functionality on another project ':a'")
+            withProblem("Build file 'build.gradle': line 102: Project ':' cannot access 'Project.version' functionality on another project ':a'")
+            withProblem("Build file 'build.gradle': line 103: Project ':' cannot access 'Project.version' functionality on another project ':a'")
+            withProblem("Build file 'build.gradle': line 104: Project ':' cannot access 'Project.version' functionality on another project ':a'")
+            withProblem("Build file 'build.gradle': line 105: Project ':' cannot access 'Project.version' functionality on another project ':a'")
+            withProblem("Build file 'build.gradle': line 106: Project ':' cannot access 'Project.version' functionality on another project ':a'")
+            withProblem("Build file 'build.gradle': line 107: Project ':' cannot access 'Project.version' functionality on another project ':a'")
+            withProblem("Build file 'build.gradle': line 108: Project ':' cannot access 'Project.version' functionality on another project ':a'")
+            withProblem("Build file 'build.gradle': line 109: Project ':' cannot access 'Project.version' functionality on another project ':a'")
+            withProblem("Build file 'build.gradle': line 11: Project ':' cannot access 'Project.version' functionality on another project ':a'")
+            withProblem("Build file 'build.gradle': line 110: Project ':' cannot access 'Project.version' functionality on another project ':a'")
+            withProblem("Build file 'build.gradle': line 111: Project ':' cannot access 'Project.version' functionality on another project ':a'")
+            totalProblemsCount = 150
+            // Only the first 50 carry the full stack
+            problemsWithStackTraceCount = 50
+        }
+
+        failure.assertHasFailure("Configuration cache problems found in this build.") { failure ->
+            failure.assertHasCauses(5)
+        }
+    }
+
+    /**
+     * In 8.10, a configuration time problem would result into the (CC) report
+     * being generated under the default build location, even if the build logic
+     * configured a custom build dir.
+     *
+     * That seems to have been fixed in 8.11, but it is not clear what change fixed it.
+     */
+    @Issue("https://github.com/gradle/gradle/issues/30361")
+    def "report is written to root project's custom buildDir"() {
+        def customBuildDir = "customBuildDir"
+        groovyFile "build.gradle", """
+            buildDir = '${customBuildDir}'
+        """
+        groovyFile "settings.gradle", """
+            include("module")
+        """
+        groovyFile "buildSrc/build.gradle", """
+            plugins {
+                id 'groovy-gradle-plugin'
+            }
+        """
+        groovyFile "buildSrc/src/main/groovy/some-plugin.gradle", """
+            // Trigger an IP violation: a cross-project property access from a configuration action.
+            tasks.named('help') {
+                project(':').version
+            }
+        """
+        groovyFile "module/build.gradle",  """
+            plugins {
+                id 'some-plugin'
+            }
+        """
+
+        when:
+        isolatedProjectsDiagnosticsFails ':module:help'
+
+        then:
+        failure.assertHasFailures(1)
+        problems.assertFailureHasProblems(failure) {
+            withProblem("Plugin 'some-plugin': Project ':module' cannot access 'Project.version' functionality on another project ':'")
+        }
+        resolveConfigurationCacheReportDirectory(testDirectory.file(customBuildDir), failure.error)?.isDirectory()
+    }
+
+    def "location detail decreases as the stack capturing budgets are spent"() {
+        given:
+        settingsFile "include(':a')"
+        createDir("a")
+        6.times {
+            buildFile "project(':a').version\n"
+        }
+
+        when:
+        // Three full captures and two bounded ones for six accesses, so both budgets are spent.
+        executer.withArgument("-Dorg.gradle.internal.problem.diagnostics.stacktrace-count.max=3")
+        executer.withArgument("-Dorg.gradle.internal.problem.diagnostics.bounded-captures.max=2")
+        isolatedProjectsDiagnosticsFails "help"
+
+        then:
+        outputContains("Configuration cache entry discarded with 6 problems.")
+        problems.assertFailureHasProblems(failure) {
+            // The access past both budgets keeps the build file, but no longer the line.
+            withProblem("Build file 'build.gradle': Project ':' cannot access 'Project.version' functionality on another project ':a'")
+            (1..5).each {
+                withProblem("Build file 'build.gradle': line $it: Project ':' cannot access 'Project.version' functionality on another project ':a'")
+            }
+            totalProblemsCount = 6
+            // Only a full capture keeps a stack worth reporting; a bounded one locates the problem
+            // without one, and past both budgets there is neither.
+            problemsWithStackTraceCount = 3
+        }
+    }
+}
