@@ -24,11 +24,12 @@ jobs:
 
       - name: Setup Gradle
         uses: gradle/actions/setup-gradle@v4
-        with:
-          cache-read-only: false
 
       - name: Run :help
-        run: ./gradlew :help --no-daemon --stacktrace
+        run: |
+          ./gradlew :help --no-daemon --stacktrace \
+            -Dorg.gradle.jvmargs="-Xmx8g -XX:MaxMetaspaceSize=1g -XX:+UseParallelGC" \
+            -Dorg.gradle.workers.max=4
 
   build-dist:
     name: Build distribution
@@ -50,7 +51,10 @@ jobs:
         uses: gradle/actions/setup-gradle@v4
 
       - name: Build bin zip
-        run: ./gradlew :distributions-full:binZip --no-daemon --stacktrace
+        run: |
+          ./gradlew :distributions-full:binZip --no-daemon --stacktrace \
+            -Dorg.gradle.jvmargs="-Xmx8g -XX:MaxMetaspaceSize=2g -XX:+UseParallelGC" \
+            -Dorg.gradle.workers.max=4
 
       - name: Upload distribution
         uses: actions/upload-artifact@v4
