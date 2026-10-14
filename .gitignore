@@ -131,3 +131,8 @@ atlassian-ide-plugin.xml
 # Gradium
 .gradium/
 *.gradium
+
+# Local distribution artifacts — never commit
+*.zip
+gradle-*-bin.zip
+granite-*-bin.zip
