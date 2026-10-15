@@ -57,7 +57,7 @@ jobs:
             -Dorg.gradle.workers.max=4
 
       - name: Upload distribution
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: gradium-dist
           path: packaging/distributions-full/build/distributions/*.zip
